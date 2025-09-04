@@ -9,7 +9,7 @@ st.set_page_config(page_title="Dashboard Picking (SAP)", layout="wide")
 
 # ================== PARÁMETROS ==================
 TABLE = "sap"
-DATE_COL = "FECHA"  # <-- Cambiá si tu columna de fecha se llama distinto
+DATE_COL = "FECHA"  # Cambiar si la columna de fecha tiene otro nombre
 
 # ================== ESTILOS ==================
 st.markdown("""
@@ -37,9 +37,6 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
 def load_base(date_range=None) -> pd.DataFrame:
-    """
-    Carga datos de la tabla sap con o sin filtro de fecha.
-    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(f"SHOW COLUMNS FROM {TABLE} LIKE %s", (DATE_COL,))
@@ -66,7 +63,6 @@ def load_base(date_range=None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
-    # Normalizaciones
     df["PICKING"] = (
         df.get("PICKING", "N")
         .fillna("N").astype(str).str.strip().str.upper()
@@ -94,7 +90,7 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
 # ================== STATE ==================
 def _ensure_state():
     if "date_range" not in st.session_state:
-        st.session_state.date_range = ()  # vacío por default
+        st.session_state.date_range = ()
     if "sel_clientes" not in st.session_state:
         st.session_state.sel_clientes = []
     if "sel_skus" not in st.session_state:
@@ -110,11 +106,8 @@ _ensure_state()
 
 # ================== UI: SIDEBAR ==================
 st.sidebar.title("Filtros")
+st.sidebar.button("Limpiar filtros", on_click=reset_filters, use_container_width=True)
 
-# Botón Limpiar filtros
-st.sidebar.button("🧹 Limpiar filtros", on_click=reset_filters, use_container_width=True)
-
-# Rango de fechas (arranca vacío)
 st.sidebar.date_input(
     "Rango de fechas",
     key="date_range",
@@ -122,17 +115,14 @@ st.sidebar.date_input(
     help=f"Filtra por {DATE_COL} (si existe)."
 )
 
-# Cargar base con el rango seleccionado
 df = load_base(st.session_state.date_range)
 
-# Opciones de cliente y sku (a partir del dataset filtrado por fecha si corresponde)
 clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
 skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
 
 st.sidebar.multiselect("Cliente", options=clientes, key="sel_clientes")
 st.sidebar.multiselect("SKU", options=skus, key="sel_skus")
 
-# Aplicar filtros acumulables
 if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
 if st.session_state.sel_skus:
@@ -159,10 +149,10 @@ with c3:
                 unsafe_allow_html=True)
 
 st.progress(avance_pct / 100 if total_qty > 0 else 0.0)
-st.markdown("—")
+st.markdown("---")
 
 # ================== TABS ==================
-tab1, tab2, tab3 = st.tabs(["📅 Por fecha", "👤 Por cliente", "🏷️ Por SKU"])
+tab1, tab2, tab3 = st.tabs(["Por fecha", "Por cliente", "Por SKU"])
 
 with tab1:
     st.subheader("Avance por fecha")
@@ -186,7 +176,7 @@ with tab1:
             ).properties(height=300)
             st.altair_chart(chart, use_container_width=True)
         except Exception:
-            st.info("No se pudo renderizar el gráfico (Altair no disponible).")
+            st.info("Altair no disponible para el gráfico.")
     else:
         st.warning(f"No hay columna `{DATE_COL}` o el filtro está vacío.")
 
@@ -210,7 +200,7 @@ with tab2:
             ).properties(height=360)
             st.altair_chart(chart, use_container_width=True)
         except Exception:
-            st.info("No se pudo renderizar el gráfico (Altair no disponible).")
+            st.info("Altair no disponible para el gráfico.")
     else:
         st.warning("La tabla no tiene columna CLIENTE.")
 
@@ -234,6 +224,6 @@ with tab3:
             ).properties(height=360)
             st.altair_chart(chart, use_container_width=True)
         except Exception:
-            st.info("No se pudo renderizar el gráfico (Altair no disponible).")
+            st.info("Altair no disponible para el gráfico.")
     else:
         st.warning("La tabla no tiene columna CODIGO (SKU).")
