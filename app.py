@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 import mysql.connector
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="Dashboard Picking (SAP)", layout="wide")
@@ -36,10 +36,9 @@ def get_conn():
 
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
-def load_base(date_from: datetime | None, date_to: datetime | None) -> pd.DataFrame:
+def load_base(date_range=None) -> pd.DataFrame:
     """
-    Carga datos de la tabla sap con filtros de fecha si existe DATE_COL.
-    Normaliza CANTIDAD y PICKING.
+    Carga datos de la tabla sap con o sin filtro de fecha.
     """
     conn = get_conn()
     cur = conn.cursor()
@@ -47,7 +46,7 @@ def load_base(date_from: datetime | None, date_to: datetime | None) -> pd.DataFr
     has_date = cur.fetchone() is not None
     cur.close()
 
-    if has_date and date_from and date_to:
+    if has_date and date_range and len(date_range) == 2 and all(date_range):
         q = f"""
             SELECT NUMERO, CLIENTE, CODIGO, CANTIDAD,
                    COALESCE(PICKING,'N') AS PICKING,
@@ -55,7 +54,7 @@ def load_base(date_from: datetime | None, date_to: datetime | None) -> pd.DataFr
             FROM {TABLE}
             WHERE DATE({DATE_COL}) BETWEEN %s AND %s
         """
-        params = [date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")]
+        params = [date_range[0].strftime("%Y-%m-%d"), date_range[1].strftime("%Y-%m-%d")]
     else:
         q = f"""
             SELECT NUMERO, CLIENTE, CODIGO, CANTIDAD,
@@ -92,53 +91,48 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
     out["avance_pct"] = (out["picked_qty"] / out["total_qty"]).where(out["total_qty"] > 0, 0) * 100
     return out.reset_index()
 
-# ================== DEFAULTS / STATE ==================
-def _default_range():
-    to_ = datetime.now().date()
-    from_ = (datetime.now() - timedelta(days=30)).date()
-    return from_, to_
-
+# ================== STATE ==================
 def _ensure_state():
     if "date_range" not in st.session_state:
-        st.session_state.date_range = _default_range()
+        st.session_state.date_range = ()  # vacío por default
     if "sel_clientes" not in st.session_state:
         st.session_state.sel_clientes = []
     if "sel_skus" not in st.session_state:
         st.session_state.sel_skus = []
 
 def reset_filters():
-    st.session_state.date_range = _default_range()
+    st.session_state.date_range = ()
     st.session_state.sel_clientes = []
     st.session_state.sel_skus = []
     st.rerun()
 
 _ensure_state()
 
-# ================== UI: SIDEBAR (simple, como la 1ª versión) ==================
+# ================== UI: SIDEBAR ==================
 st.sidebar.title("Filtros")
 
-# Botón Limpiar filtros (resetea rango y selecciones)
+# Botón Limpiar filtros
 st.sidebar.button("🧹 Limpiar filtros", on_click=reset_filters, use_container_width=True)
 
-# Rango de fechas (si existe FECHA se aplica)
+# Rango de fechas (arranca vacío)
 st.sidebar.date_input(
     "Rango de fechas",
     key="date_range",
+    value=(),
     help=f"Filtra por {DATE_COL} (si existe)."
 )
 
-# Cargar base con rango (o todo si no existe FECHA)
-date_from, date_to = st.session_state.date_range if isinstance(st.session_state.date_range, tuple) else _default_range()
-df = load_base(date_from, date_to)
+# Cargar base con el rango seleccionado
+df = load_base(st.session_state.date_range)
 
-# Opciones para selects (derivadas del df ya filtrado por fecha, como en la 1ª versión)
+# Opciones de cliente y sku (a partir del dataset filtrado por fecha si corresponde)
 clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
 skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
 
 st.sidebar.multiselect("Cliente", options=clientes, key="sel_clientes")
 st.sidebar.multiselect("SKU", options=skus, key="sel_skus")
 
-# Aplicar filtros (AND si se usan ambos, igual que la primera versión)
+# Aplicar filtros acumulables
 if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
 if st.session_state.sel_skus:
@@ -194,7 +188,7 @@ with tab1:
         except Exception:
             st.info("No se pudo renderizar el gráfico (Altair no disponible).")
     else:
-        st.warning(f"No se encontró la columna `{DATE_COL}` o no hay datos en el rango.")
+        st.warning(f"No hay columna `{DATE_COL}` o el filtro está vacío.")
 
 with tab2:
     st.subheader("Avance por cliente")
