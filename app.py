@@ -36,9 +36,9 @@ def get_conn():
 
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
-def load_base(date_from: datetime | None = None, date_to: datetime | None = None, use_date_filter: bool = False) -> pd.DataFrame:
+def load_base(date_from: datetime | None, date_to: datetime | None) -> pd.DataFrame:
     """
-    Carga datos de la tabla sap. Si use_date_filter=True y existe DATE_COL, filtra por rango.
+    Carga datos de la tabla sap con filtros de fecha si existe DATE_COL.
     Normaliza CANTIDAD y PICKING.
     """
     conn = get_conn()
@@ -47,7 +47,7 @@ def load_base(date_from: datetime | None = None, date_to: datetime | None = None
     has_date = cur.fetchone() is not None
     cur.close()
 
-    if use_date_filter and has_date and date_from and date_to:
+    if has_date and date_from and date_to:
         q = f"""
             SELECT NUMERO, CLIENTE, CODIGO, CANTIDAD,
                    COALESCE(PICKING,'N') AS PICKING,
@@ -68,23 +68,18 @@ def load_base(date_from: datetime | None = None, date_to: datetime | None = None
     conn.close()
 
     # Normalizaciones
-    df["PICKING"] = df.get("PICKING", "N")
     df["PICKING"] = (
-        df["PICKING"]
+        df.get("PICKING", "N")
         .fillna("N").astype(str).str.strip().str.upper()
         .replace({"": "N"})
     )
-
-    # CANTIDAD
     df["CANTIDAD"] = pd.to_numeric(df.get("CANTIDAD", 0), errors="coerce").fillna(0)
 
-    # CLIENTE sin .0 si es entero
     if "CLIENTE" in df.columns:
         df["CLIENTE"] = df["CLIENTE"].apply(
             lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
         )
 
-    # FECHA
     if "FECHA" in df.columns:
         df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
 
@@ -98,72 +93,60 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
     return out.reset_index()
 
 # ================== DEFAULTS / STATE ==================
-def _defaults():
-    default_to = datetime.now().date()
-    default_from = (datetime.now() - timedelta(days=30)).date()
-    return default_from, default_to
+def _default_range():
+    to_ = datetime.now().date()
+    from_ = (datetime.now() - timedelta(days=30)).date()
+    return from_, to_
+
+def _ensure_state():
+    if "date_range" not in st.session_state:
+        st.session_state.date_range = _default_range()
+    if "sel_clientes" not in st.session_state:
+        st.session_state.sel_clientes = []
+    if "sel_skus" not in st.session_state:
+        st.session_state.sel_skus = []
 
 def reset_filters():
-    # Deja TODOS los filtros apagados (incluido fecha)
-    dfrom, dto = _defaults()
-    st.session_state.apply_date = False
-    st.session_state.apply_client = False
-    st.session_state.apply_sku = False
-    st.session_state.date_range = (dfrom, dto)  # guardamos un valor válido por si luego se activa
+    st.session_state.date_range = _default_range()
     st.session_state.sel_clientes = []
     st.session_state.sel_skus = []
     st.rerun()
 
-# Inicializar state si no existe
-if "apply_date" not in st.session_state:
-    dfrom, dto = _defaults()
-    st.session_state.update({
-        "apply_date": False,       # <--- apagado por defecto
-        "apply_client": False,
-        "apply_sku": False,
-        "date_range": (dfrom, dto),
-        "sel_clientes": [],
-        "sel_skus": [],
-    })
+_ensure_state()
 
-# ================== UI: SIDEBAR ==================
+# ================== UI: SIDEBAR (simple, como la 1ª versión) ==================
 st.sidebar.title("Filtros")
 
-# Universo completo para opciones (independiente de filtros aplicados)
-df_universe = load_base(use_date_filter=False)
-clientes_all = sorted(df_universe["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df_universe.columns else []
-skus_all     = sorted(df_universe["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df_universe.columns else []
-
-# Botón Limpiar filtros
+# Botón Limpiar filtros (resetea rango y selecciones)
 st.sidebar.button("🧹 Limpiar filtros", on_click=reset_filters, use_container_width=True)
 
-# Controles con keys en session_state
-st.sidebar.checkbox("Filtrar por fecha", key="apply_date")
-if st.session_state.apply_date:
-    st.sidebar.date_input(
-        "Rango de fechas",
-        key="date_range",
-        help=f"Filtra por {DATE_COL} (si existe).",
-    )
+# Rango de fechas (si existe FECHA se aplica)
+st.sidebar.date_input(
+    "Rango de fechas",
+    key="date_range",
+    help=f"Filtra por {DATE_COL} (si existe)."
+)
 
-st.sidebar.checkbox("Filtrar por cliente", key="apply_client")
-st.sidebar.multiselect("Cliente", options=clientes_all, key="sel_clientes")
+# Cargar base con rango (o todo si no existe FECHA)
+date_from, date_to = st.session_state.date_range if isinstance(st.session_state.date_range, tuple) else _default_range()
+df = load_base(date_from, date_to)
 
-st.sidebar.checkbox("Filtrar por SKU", key="apply_sku")
-st.sidebar.multiselect("SKU", options=skus_all, key="sel_skus")
+# Opciones para selects (derivadas del df ya filtrado por fecha, como en la 1ª versión)
+clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
+skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
 
-# Dataset filtrado
-date_from, date_to = st.session_state.date_range if isinstance(st.session_state.date_range, tuple) else _defaults()
-df = load_base(date_from, date_to, use_date_filter=st.session_state.apply_date)
+st.sidebar.multiselect("Cliente", options=clientes, key="sel_clientes")
+st.sidebar.multiselect("SKU", options=skus, key="sel_skus")
 
-# Aplicar filtros acumulables (AND cuando ambos están activos)
-if st.session_state.apply_client and st.session_state.sel_clientes:
+# Aplicar filtros (AND si se usan ambos, igual que la primera versión)
+if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
-if st.session_state.apply_sku and st.session_state.sel_skus:
+if st.session_state.sel_skus:
     df = df[df["CODIGO"].isin(st.session_state.sel_skus)]
 
 # ================== KPIs GLOBALES ==================
 st.title("Dashboard Picking (SAP)")
+
 total_qty = float(df["CANTIDAD"].sum())
 picked_qty = float(df.loc[df["PICKING"] == "Y", "CANTIDAD"].sum())
 avance_pct = (picked_qty / total_qty * 100) if total_qty > 0 else 0
@@ -182,19 +165,16 @@ with c3:
                 unsafe_allow_html=True)
 
 st.progress(avance_pct / 100 if total_qty > 0 else 0.0)
-st.markdown("---")
+st.markdown("—")
 
 # ================== TABS ==================
-def safe_is_date_col(df: pd.DataFrame) -> bool:
-    return "FECHA" in df.columns and not df["FECHA"].isna().all()
-
 tab1, tab2, tab3 = st.tabs(["📅 Por fecha", "👤 Por cliente", "🏷️ Por SKU"])
 
 with tab1:
     st.subheader("Avance por fecha")
-    if safe_is_date_col(df):
+    if "FECHA" in df.columns and not df["FECHA"].isna().all():
         tmp = df.copy()
-        tmp["fecha_dia"] = tmp["FECHA"].dt.date
+        tmp["fecha_dia"] = pd.to_datetime(tmp["FECHA"], errors="coerce").dt.date
         g = agg_progress(tmp, by=["fecha_dia"]).sort_values("fecha_dia")
         st.dataframe(g.rename(columns={
             "fecha_dia": "Fecha",
@@ -214,7 +194,7 @@ with tab1:
         except Exception:
             st.info("No se pudo renderizar el gráfico (Altair no disponible).")
     else:
-        st.warning(f"No hay columna `{DATE_COL}` con datos para este rango o el filtro de fecha está apagado.")
+        st.warning(f"No se encontró la columna `{DATE_COL}` o no hay datos en el rango.")
 
 with tab2:
     st.subheader("Avance por cliente")
@@ -226,6 +206,7 @@ with tab2:
             "picked_qty": "Pickeado",
             "avance_pct": "Avance %"
         }), use_container_width=True)
+
         try:
             import altair as alt
             chart = alt.Chart(g).mark_bar().encode(
@@ -249,6 +230,7 @@ with tab3:
             "picked_qty": "Pickeado",
             "avance_pct": "Avance %"
         }), use_container_width=True)
+
         try:
             import altair as alt
             chart = alt.Chart(g).mark_bar().encode(
