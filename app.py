@@ -97,55 +97,70 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
     out["avance_pct"] = (out["picked_qty"] / out["total_qty"]).where(out["total_qty"] > 0, 0) * 100
     return out.reset_index()
 
-# ================== UI: SIDEBAR (filtros independientes y acumulables) ==================
+# ================== DEFAULTS / STATE ==================
+def _defaults():
+    default_to = datetime.now().date()
+    default_from = (datetime.now() - timedelta(days=30)).date()
+    return default_from, default_to
+
+def reset_filters():
+    # Deja TODOS los filtros apagados (incluido fecha)
+    dfrom, dto = _defaults()
+    st.session_state.apply_date = False
+    st.session_state.apply_client = False
+    st.session_state.apply_sku = False
+    st.session_state.date_range = (dfrom, dto)  # guardamos un valor válido por si luego se activa
+    st.session_state.sel_clientes = []
+    st.session_state.sel_skus = []
+    st.rerun()
+
+# Inicializar state si no existe
+if "apply_date" not in st.session_state:
+    dfrom, dto = _defaults()
+    st.session_state.update({
+        "apply_date": False,       # <--- apagado por defecto
+        "apply_client": False,
+        "apply_sku": False,
+        "date_range": (dfrom, dto),
+        "sel_clientes": [],
+        "sel_skus": [],
+    })
+
+# ================== UI: SIDEBAR ==================
 st.sidebar.title("Filtros")
 
-# 1) Universo completo para opciones (independiente de filtros aplicados)
+# Universo completo para opciones (independiente de filtros aplicados)
 df_universe = load_base(use_date_filter=False)
-
 clientes_all = sorted(df_universe["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df_universe.columns else []
 skus_all     = sorted(df_universe["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df_universe.columns else []
 
-# 2) Controles para activar/desactivar cada filtro
-apply_date = st.sidebar.checkbox("Filtrar por fecha", value=True)
-apply_client = st.sidebar.checkbox("Filtrar por cliente", value=False)
-apply_sku = st.sidebar.checkbox("Filtrar por SKU", value=False)
+# Botón Limpiar filtros
+st.sidebar.button("🧹 Limpiar filtros", on_click=reset_filters, use_container_width=True)
 
-# Rango de fechas (por defecto últimos 30 días)
-default_to = datetime.now().date()
-default_from = (datetime.now() - timedelta(days=30)).date()
-date_from, date_to = default_from, default_to
-if apply_date:
-    date_range = st.sidebar.date_input("Rango de fechas", (default_from, default_to))
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        date_from, date_to = date_range
+# Controles con keys en session_state
+st.sidebar.checkbox("Filtrar por fecha", key="apply_date")
+if st.session_state.apply_date:
+    st.sidebar.date_input(
+        "Rango de fechas",
+        key="date_range",
+        help=f"Filtra por {DATE_COL} (si existe).",
+    )
 
-# Selectores de cliente y sku (independientes del resto)
-sel_clientes = st.sidebar.multiselect("Cliente", options=clientes_all, default=[])
-sel_skus = st.sidebar.multiselect("SKU", options=skus_all, default=[])
+st.sidebar.checkbox("Filtrar por cliente", key="apply_client")
+st.sidebar.multiselect("Cliente", options=clientes_all, key="sel_clientes")
 
-# Modo combinación entre Cliente y SKU
-combine_mode = st.sidebar.radio(
-    "Combinar Cliente y SKU",
-    options=["AND", "OR"],
-    horizontal=True,
-    help="AND = debe cumplir ambos filtros. OR = alcanza con Cliente o SKU."
-)
+st.sidebar.checkbox("Filtrar por SKU", key="apply_sku")
+st.sidebar.multiselect("SKU", options=skus_all, key="sel_skus")
 
-# 3) Dataset filtrado (acumulación según activados)
-df = load_base(date_from, date_to, use_date_filter=apply_date)
+# Dataset filtrado
+date_from, date_to = st.session_state.date_range if isinstance(st.session_state.date_range, tuple) else _defaults()
+df = load_base(date_from, date_to, use_date_filter=st.session_state.apply_date)
 
-# Aplicar filtros de Cliente/SKU según modo
-if apply_client and sel_clientes and apply_sku and sel_skus:
-    if combine_mode == "AND":
-        df = df[df["CLIENTE"].isin(sel_clientes) & df["CODIGO"].isin(sel_skus)]
-    else:  # OR
-        df = df[df["CLIENTE"].isin(sel_clientes) | df["CODIGO"].isin(sel_skus)]
-else:
-    if apply_client and sel_clientes:
-        df = df[df["CLIENTE"].isin(sel_clientes)]
-    if apply_sku and sel_skus:
-        df = df[df["CODIGO"].isin(sel_skus)]
+# Aplicar filtros acumulables (AND cuando ambos están activos)
+if st.session_state.apply_client and st.session_state.sel_clientes:
+    df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
+if st.session_state.apply_sku and st.session_state.sel_skus:
+    df = df[df["CODIGO"].isin(st.session_state.sel_skus)]
 
 # ================== KPIs GLOBALES ==================
 st.title("Dashboard Picking (SAP)")
@@ -199,7 +214,7 @@ with tab1:
         except Exception:
             st.info("No se pudo renderizar el gráfico (Altair no disponible).")
     else:
-        st.warning(f"No hay columna `{DATE_COL}` con datos para este rango.")
+        st.warning(f"No hay columna `{DATE_COL}` con datos para este rango o el filtro de fecha está apagado.")
 
 with tab2:
     st.subheader("Avance por cliente")
