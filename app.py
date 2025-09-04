@@ -17,12 +17,10 @@ st.markdown("""
 .block-container { padding-top: 1.25rem !important; }
 .kpi {
   background: #fff; border: 1px solid #eee; border-radius: 12px;
-  padding: 16px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,.03);
+  padding: 16px; text-align: center; box-shadow: 0 1px 6px rgba(0,0,0,.05);
 }
 .kpi h3 { margin: 0; font-size: 1.4rem; }
 .kpi small { color: #666; }
-
-/* Opcional: mejorar legibilidad del header de filtros */
 .filter-bar {
   background: #fafafa; border: 1px solid #eee; border-radius: 10px;
   padding: 12px; margin-bottom: 12px;
@@ -43,9 +41,6 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
 def load_base(date_range=None) -> pd.DataFrame:
-    """
-    Carga datos de la tabla sap con o sin filtro de fecha (si DATE_COL existe).
-    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(f"SHOW COLUMNS FROM {TABLE} LIKE %s", (DATE_COL,))
@@ -99,7 +94,7 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
 # ================== STATE ==================
 def _ensure_state():
     if "date_range" not in st.session_state:
-        st.session_state.date_range = ()  # vacío por default
+        st.session_state.date_range = ()
     if "sel_clientes" not in st.session_state:
         st.session_state.sel_clientes = []
     if "sel_skus" not in st.session_state:
@@ -114,35 +109,26 @@ def reset_filters():
 _ensure_state()
 
 # ================== SIDEBAR ==================
-st.sidebar.title("Acciones")
+st.sidebar.title("Filtros")
+
+st.sidebar.date_input(
+    "Rango de fechas",
+    key="date_range",
+    value=(),
+    help=f"Filtra por {DATE_COL} (si existe)."
+)
+
+df = load_base(st.session_state.date_range)
+
+clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
+skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
+
+st.sidebar.multiselect("Cliente", options=clientes, key="sel_clientes")
+st.sidebar.multiselect("SKU", options=skus, key="sel_skus")
+
+# Botón limpiar filtros (debajo de todo)
 st.sidebar.button("Limpiar filtros", on_click=reset_filters, use_container_width=True)
 
-# ================== BARRA DE FILTROS (ÁREA PRINCIPAL) ==================
-with st.container():
-    st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
-    fc1, fc2, fc3 = st.columns([1, 2, 2], vertical_alignment="center")
-
-    with fc1:
-        st.date_input(
-            "Rango de fechas",
-            key="date_range",
-            value=(),
-            help=f"Filtra por {DATE_COL} (si existe)."
-        )
-    # Cargamos base parcial según la fecha elegida (para que los combos se alimenten de ese recorte)
-    df = load_base(st.session_state.date_range)
-
-    clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
-    skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
-
-    with fc2:
-        st.multiselect("Cliente", options=clientes, key="sel_clientes")
-    with fc3:
-        st.multiselect("SKU", options=skus, key="sel_skus")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# Aplicar filtros Cliente / SKU
 if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
 if st.session_state.sel_skus:
