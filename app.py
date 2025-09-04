@@ -23,15 +23,7 @@ st.markdown("""
   box-shadow: 0 1px 6px rgba(0,0,0,.04);
 }
 
-/* KPIs */
-.kpi {
-  background: #fff; border: 1px solid #eee; border-radius: 12px;
-  padding: 16px; text-align: center; box-shadow: 0 1px 6px rgba(0,0,0,.05);
-}
-.kpi h3 { margin: 0; font-size: 1.4rem; }
-.kpi small { color: #666; }
-
-/* Popover del datepicker */
+/* Popover del datepicker por encima */
 div[data-baseweb="popover"], div[role="dialog"] { z-index: 10000 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -119,13 +111,14 @@ _ensure_state()
 
 # ================== FILTROS ARRIBA ==================
 st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
-c1, c2, c3 = st.columns(3)
 
+# Fila de controles
+c1, c2, c3 = st.columns(3)
 with c1:
     st.date_input("Rango de fechas", key="date_range", value=(),
                   help=f"Filtra por {DATE_COL} (si existe).")
 
-# cargar base en función de la fecha antes de poblar selects
+# Cargar base en función de la fecha antes de poblar selects
 df = load_base(st.session_state.date_range)
 
 clientes_opts = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
@@ -136,7 +129,9 @@ with c2:
 with c3:
     st.multiselect("SKU", options=skus_opts, key="sel_skus")
 
+# Botón limpiar filtros debajo
 st.button("Limpiar filtros", on_click=reset_filters)
+
 st.markdown('</div>', unsafe_allow_html=True)
 
 # Aplicar filtros acumulables
@@ -145,32 +140,10 @@ if st.session_state.sel_clientes:
 if st.session_state.sel_skus:
     df = df[df["CODIGO"].isin(st.session_state.sel_skus)]
 
-# ================== KPIs GLOBALES ==================
-st.title("Dashboard Picking (SAP)")
-total_qty = float(df["CANTIDAD"].sum())
-picked_qty = float(df.loc[df["PICKING"] == "Y", "CANTIDAD"].sum())
-avance_pct = (picked_qty / total_qty * 100) if total_qty > 0 else 0
-
-k1, k2, k3 = st.columns(3)
-with k1:
-    st.markdown('<div class="kpi"><small>Total Cantidad</small><h3>{}</h3></div>'.format(
-        int(total_qty) if total_qty.is_integer() else round(total_qty, 2)
-    ), unsafe_allow_html=True)
-with k2:
-    st.markdown('<div class="kpi"><small>Cantidad Pickeada</small><h3>{}</h3></div>'.format(
-        int(picked_qty) if picked_qty.is_integer() else round(picked_qty, 2)
-    ), unsafe_allow_html=True)
-with k3:
-    st.markdown('<div class="kpi"><small>Avance</small><h3>{:.1f}%</h3></div>'.format(avance_pct),
-                unsafe_allow_html=True)
-
-st.progress(avance_pct / 100 if total_qty > 0 else 0.0)
-st.markdown("---")
-
-# ================== RESULTADOS (UNA SOLA VISTA) ==================
+# ================== RESULTADOS EN UNA SOLA PÁGINA ==================
 st.header("Resultados")
 
-# 1) Avance por fecha
+# Avance por fecha
 st.subheader("Avance por fecha")
 if "FECHA" in df.columns and not df["FECHA"].isna().all():
     tmp = df.copy()
@@ -182,7 +155,6 @@ if "FECHA" in df.columns and not df["FECHA"].isna().all():
         "picked_qty": "Pickeado",
         "avance_pct": "Avance %"
     }), use_container_width=True)
-
     try:
         import altair as alt
         chart_fecha = alt.Chart(g_fecha).mark_bar().encode(
@@ -198,7 +170,7 @@ else:
 
 st.markdown("---")
 
-# 2) Avance por cliente
+# Avance por cliente
 st.subheader("Avance por cliente")
 if "CLIENTE" in df.columns:
     g_cli = agg_progress(df, by=["CLIENTE"]).sort_values("avance_pct", ascending=False)
@@ -223,7 +195,7 @@ else:
 
 st.markdown("---")
 
-# 3) Avance por SKU
+# Avance por SKU
 st.subheader("Avance por SKU")
 if "CODIGO" in df.columns:
     g_sku = agg_progress(df, by=["CODIGO"]).sort_values("avance_pct", ascending=False)
