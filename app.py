@@ -14,17 +14,25 @@ DATE_COL = "FECHA"  # Cambiar si la columna de fecha tiene otro nombre
 # ================== ESTILOS ==================
 st.markdown("""
 <style>
-.block-container { padding-top: 1.25rem !important; }
+.block-container { padding-top: 1.0rem !important; }
+
+/* Barra de filtros centrada */
+.filter-bar {
+  background: #fafafa; border: 1px solid #eee; border-radius: 12px;
+  padding: 12px; margin: 8px auto 16px auto; max-width: 1200px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.04);
+}
+
+/* KPIs */
 .kpi {
   background: #fff; border: 1px solid #eee; border-radius: 12px;
   padding: 16px; text-align: center; box-shadow: 0 1px 6px rgba(0,0,0,.05);
 }
 .kpi h3 { margin: 0; font-size: 1.4rem; }
 .kpi small { color: #666; }
-.filter-bar {
-  background: #fafafa; border: 1px solid #eee; border-radius: 10px;
-  padding: 12px; margin-bottom: 12px;
-}
+
+/* Popover del datepicker con z-index alto para evitar cortes */
+div[data-baseweb="popover"], div[role="dialog"] { z-index: 10000 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -68,6 +76,7 @@ def load_base(date_range=None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
+    # Normalizaciones
     df["PICKING"] = (
         df.get("PICKING", "N")
         .fillna("N").astype(str).str.strip().str.upper()
@@ -108,28 +117,33 @@ def reset_filters():
 
 _ensure_state()
 
-# ================== FILTRO DE FECHA EN ÁREA PRINCIPAL ==================
+# ================== FILTROS ARRIBA, CENTRADOS ==================
 st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
-fc1, = st.columns([1])
-with fc1:
+# columnas centradas: margen-izq, controles, margen-der
+c_pad_left, c1, c2, c3, c4, c_pad_right = st.columns([1, 2, 2, 2, 1.2, 1])
+
+with c1:
     st.date_input(
         "Rango de fechas",
         key="date_range",
         value=(),   # vacío -> sin filtro
         help=f"Filtra por {DATE_COL} (si existe)."
     )
-st.markdown('</div>', unsafe_allow_html=True)
 
-# Cargar base en función de la fecha seleccionada
+# Cargar base según fecha antes de poblar selects
 df = load_base(st.session_state.date_range)
 
-# ================== SIDEBAR (multiselects + limpiar abajo) ==================
-st.sidebar.title("Filtros")
-clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
-skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
-st.sidebar.multiselect("Cliente", options=clientes, key="sel_clientes")
-st.sidebar.multiselect("SKU", options=skus, key="sel_skus")
-st.sidebar.button("Limpiar filtros", on_click=reset_filters, use_container_width=True)
+clientes_opts = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
+skus_opts     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
+
+with c2:
+    st.multiselect("Cliente", options=clientes_opts, key="sel_clientes")
+with c3:
+    st.multiselect("SKU", options=skus_opts, key="sel_skus")
+with c4:
+    st.write("")  # espacio vertical
+    st.button("Limpiar filtros", on_click=reset_filters, use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 # Aplicar filtros Cliente / SKU
 if st.session_state.sel_clientes:
@@ -143,16 +157,16 @@ total_qty = float(df["CANTIDAD"].sum())
 picked_qty = float(df.loc[df["PICKING"] == "Y", "CANTIDAD"].sum())
 avance_pct = (picked_qty / total_qty * 100) if total_qty > 0 else 0
 
-c1, c2, c3 = st.columns(3)
-with c1:
+k1, k2, k3 = st.columns(3)
+with k1:
     st.markdown('<div class="kpi"><small>Total Cantidad</small><h3>{}</h3></div>'.format(
         int(total_qty) if total_qty.is_integer() else round(total_qty, 2)
     ), unsafe_allow_html=True)
-with c2:
+with k2:
     st.markdown('<div class="kpi"><small>Cantidad Pickeada</small><h3>{}</h3></div>'.format(
         int(picked_qty) if picked_qty.is_integer() else round(picked_qty, 2)
     ), unsafe_allow_html=True)
-with c3:
+with k3:
     st.markdown('<div class="kpi"><small>Avance</small><h3>{:.1f}%</h3></div>'.format(avance_pct),
                 unsafe_allow_html=True)
 
