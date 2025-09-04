@@ -16,10 +16,10 @@ st.markdown("""
 <style>
 .block-container { padding-top: 1.0rem !important; }
 
-/* Barra de filtros centrada */
+/* Barra de filtros */
 .filter-bar {
   background: #fafafa; border: 1px solid #eee; border-radius: 12px;
-  padding: 12px; margin: 8px auto 16px auto; max-width: 1200px;
+  padding: 16px; margin: 8px auto 16px auto; max-width: 1200px;
   box-shadow: 0 1px 6px rgba(0,0,0,.04);
 }
 
@@ -31,7 +31,7 @@ st.markdown("""
 .kpi h3 { margin: 0; font-size: 1.4rem; }
 .kpi small { color: #666; }
 
-/* Popover del datepicker con z-index alto para evitar cortes */
+/* Popover del datepicker */
 div[data-baseweb="popover"], div[role="dialog"] { z-index: 10000 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -49,7 +49,6 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
 def load_base(date_range=None) -> pd.DataFrame:
-    """Carga datos con o sin filtro de fecha (si DATE_COL existe)."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(f"SHOW COLUMNS FROM {TABLE} LIKE %s", (DATE_COL,))
@@ -76,7 +75,6 @@ def load_base(date_range=None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
-    # Normalizaciones
     df["PICKING"] = (
         df.get("PICKING", "N")
         .fillna("N").astype(str).str.strip().str.upper()
@@ -103,7 +101,7 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
 # ================== STATE ==================
 def _ensure_state():
     if "date_range" not in st.session_state:
-        st.session_state.date_range = ()   # sin fecha por defecto
+        st.session_state.date_range = ()
     if "sel_clientes" not in st.session_state:
         st.session_state.sel_clientes = []
     if "sel_skus" not in st.session_state:
@@ -117,20 +115,14 @@ def reset_filters():
 
 _ensure_state()
 
-# ================== FILTROS ARRIBA, CENTRADOS ==================
+# ================== FILTROS ARRIBA ==================
 st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
-# columnas centradas: margen-izq, controles, margen-der
-c_pad_left, c1, c2, c3, c4, c_pad_right = st.columns([1, 2, 2, 2, 1.2, 1])
+c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.date_input(
-        "Rango de fechas",
-        key="date_range",
-        value=(),   # vacío -> sin filtro
-        help=f"Filtra por {DATE_COL} (si existe)."
-    )
+    st.date_input("Rango de fechas", key="date_range", value=(),
+                  help=f"Filtra por {DATE_COL} (si existe).")
 
-# Cargar base según fecha antes de poblar selects
 df = load_base(st.session_state.date_range)
 
 clientes_opts = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
@@ -140,12 +132,13 @@ with c2:
     st.multiselect("Cliente", options=clientes_opts, key="sel_clientes")
 with c3:
     st.multiselect("SKU", options=skus_opts, key="sel_skus")
-with c4:
-    st.write("")  # espacio vertical
-    st.button("Limpiar filtros", on_click=reset_filters, use_container_width=True)
+
+# Botón limpiar debajo de los filtros
+st.button("Limpiar filtros", on_click=reset_filters)
+
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Aplicar filtros Cliente / SKU
+# Aplicar filtros
 if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
 if st.session_state.sel_skus:
@@ -153,6 +146,7 @@ if st.session_state.sel_skus:
 
 # ================== KPIs GLOBALES ==================
 st.title("Dashboard Picking (SAP)")
+
 total_qty = float(df["CANTIDAD"].sum())
 picked_qty = float(df.loc[df["PICKING"] == "Y", "CANTIDAD"].sum())
 avance_pct = (picked_qty / total_qty * 100) if total_qty > 0 else 0
