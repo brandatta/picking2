@@ -49,6 +49,7 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
 def load_base(date_range=None) -> pd.DataFrame:
+    """Carga datos con o sin filtro de fecha (si DATE_COL existe)."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(f"SHOW COLUMNS FROM {TABLE} LIKE %s", (DATE_COL,))
@@ -75,6 +76,7 @@ def load_base(date_range=None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
+    # Normalizaciones
     df["PICKING"] = (
         df.get("PICKING", "N")
         .fillna("N").astype(str).str.strip().str.upper()
@@ -101,7 +103,7 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
 # ================== STATE ==================
 def _ensure_state():
     if "date_range" not in st.session_state:
-        st.session_state.date_range = ()
+        st.session_state.date_range = ()   # sin fecha por defecto
     if "sel_clientes" not in st.session_state:
         st.session_state.sel_clientes = []
     if "sel_skus" not in st.session_state:
@@ -123,6 +125,7 @@ with c1:
     st.date_input("Rango de fechas", key="date_range", value=(),
                   help=f"Filtra por {DATE_COL} (si existe).")
 
+# cargar base en función de la fecha antes de poblar selects
 df = load_base(st.session_state.date_range)
 
 clientes_opts = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
@@ -133,12 +136,10 @@ with c2:
 with c3:
     st.multiselect("SKU", options=skus_opts, key="sel_skus")
 
-# Botón limpiar debajo de los filtros
 st.button("Limpiar filtros", on_click=reset_filters)
-
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Aplicar filtros
+# Aplicar filtros acumulables
 if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
 if st.session_state.sel_skus:
@@ -146,7 +147,6 @@ if st.session_state.sel_skus:
 
 # ================== KPIs GLOBALES ==================
 st.title("Dashboard Picking (SAP)")
-
 total_qty = float(df["CANTIDAD"].sum())
 picked_qty = float(df.loc[df["PICKING"] == "Y", "CANTIDAD"].sum())
 avance_pct = (picked_qty / total_qty * 100) if total_qty > 0 else 0
@@ -167,76 +167,81 @@ with k3:
 st.progress(avance_pct / 100 if total_qty > 0 else 0.0)
 st.markdown("---")
 
-# ================== TABS ==================
-tab1, tab2, tab3 = st.tabs(["Por fecha", "Por cliente", "Por SKU"])
+# ================== RESULTADOS (UNA SOLA VISTA) ==================
+st.header("Resultados")
 
-with tab1:
-    st.subheader("Avance por fecha")
-    if "FECHA" in df.columns and not df["FECHA"].isna().all():
-        tmp = df.copy()
-        tmp["fecha_dia"] = pd.to_datetime(tmp["FECHA"], errors="coerce").dt.date
-        g = agg_progress(tmp, by=["fecha_dia"]).sort_values("fecha_dia")
-        st.dataframe(g.rename(columns={
-            "fecha_dia": "Fecha",
-            "total_qty": "Total",
-            "picked_qty": "Pickeado",
-            "avance_pct": "Avance %"
-        }), use_container_width=True)
-        try:
-            import altair as alt
-            chart = alt.Chart(g).mark_bar().encode(
-                x=alt.X("fecha_dia:T", title="Fecha"),
-                y=alt.Y("avance_pct:Q", title="Avance %"),
-                tooltip=["fecha_dia:T", "total_qty:Q", "picked_qty:Q", alt.Tooltip("avance_pct:Q", format=".1f")]
-            ).properties(height=300)
-            st.altair_chart(chart, use_container_width=True)
-        except Exception:
-            st.info("Altair no disponible para el gráfico.")
-    else:
-        st.warning(f"No hay columna `{DATE_COL}` o el filtro de fecha está vacío.")
+# 1) Avance por fecha
+st.subheader("Avance por fecha")
+if "FECHA" in df.columns and not df["FECHA"].isna().all():
+    tmp = df.copy()
+    tmp["fecha_dia"] = pd.to_datetime(tmp["FECHA"], errors="coerce").dt.date
+    g_fecha = agg_progress(tmp, by=["fecha_dia"]).sort_values("fecha_dia")
+    st.dataframe(g_fecha.rename(columns={
+        "fecha_dia": "Fecha",
+        "total_qty": "Total",
+        "picked_qty": "Pickeado",
+        "avance_pct": "Avance %"
+    }), use_container_width=True)
 
-with tab2:
-    st.subheader("Avance por cliente")
-    if "CLIENTE" in df.columns:
-        g = agg_progress(df, by=["CLIENTE"]).sort_values("avance_pct", ascending=False)
-        st.dataframe(g.rename(columns={
-            "CLIENTE": "Cliente",
-            "total_qty": "Total",
-            "picked_qty": "Pickeado",
-            "avance_pct": "Avance %"
-        }), use_container_width=True)
-        try:
-            import altair as alt
-            chart = alt.Chart(g).mark_bar().encode(
-                x=alt.X("CLIENTE:N", sort="-y", title="Cliente"),
-                y=alt.Y("avance_pct:Q", title="Avance %"),
-                tooltip=["CLIENTE:N", "total_qty:Q", "picked_qty:Q", alt.Tooltip("avance_pct:Q", format=".1f")]
-            ).properties(height=360)
-            st.altair_chart(chart, use_container_width=True)
-        except Exception:
-            st.info("Altair no disponible para el gráfico.")
-    else:
-        st.warning("La tabla no tiene columna CLIENTE.")
+    try:
+        import altair as alt
+        chart_fecha = alt.Chart(g_fecha).mark_bar().encode(
+            x=alt.X("fecha_dia:T", title="Fecha"),
+            y=alt.Y("avance_pct:Q", title="Avance %"),
+            tooltip=["fecha_dia:T", "total_qty:Q", "picked_qty:Q", alt.Tooltip("avance_pct:Q", format=".1f")]
+        ).properties(height=300)
+        st.altair_chart(chart_fecha, use_container_width=True)
+    except Exception:
+        st.info("Altair no disponible para el gráfico.")
+else:
+    st.warning(f"No hay columna `{DATE_COL}` o el filtro de fecha está vacío.")
 
-with tab3:
-    st.subheader("Avance por SKU")
-    if "CODIGO" in df.columns:
-        g = agg_progress(df, by=["CODIGO"]).sort_values("avance_pct", ascending=False)
-        st.dataframe(g.rename(columns={
-            "CODIGO": "SKU",
-            "total_qty": "Total",
-            "picked_qty": "Pickeado",
-            "avance_pct": "Avance %"
-        }), use_container_width=True)
-        try:
-            import altair as alt
-            chart = alt.Chart(g).mark_bar().encode(
-                x=alt.X("CODIGO:N", sort="-y", title="SKU"),
-                y=alt.Y("avance_pct:Q", title="Avance %"),
-                tooltip=["CODIGO:N", "total_qty:Q", "picked_qty:Q", alt.Tooltip("avance_pct:Q", format=".1f")]
-            ).properties(height=360)
-            st.altair_chart(chart, use_container_width=True)
-        except Exception:
-            st.info("Altair no disponible para el gráfico.")
-    else:
-        st.warning("La tabla no tiene columna CODIGO (SKU).")
+st.markdown("---")
+
+# 2) Avance por cliente
+st.subheader("Avance por cliente")
+if "CLIENTE" in df.columns:
+    g_cli = agg_progress(df, by=["CLIENTE"]).sort_values("avance_pct", ascending=False)
+    st.dataframe(g_cli.rename(columns={
+        "CLIENTE": "Cliente",
+        "total_qty": "Total",
+        "picked_qty": "Pickeado",
+        "avance_pct": "Avance %"
+    }), use_container_width=True)
+    try:
+        import altair as alt
+        chart_cli = alt.Chart(g_cli).mark_bar().encode(
+            x=alt.X("CLIENTE:N", sort="-y", title="Cliente"),
+            y=alt.Y("avance_pct:Q", title="Avance %"),
+            tooltip=["CLIENTE:N", "total_qty:Q", "picked_qty:Q", alt.Tooltip("avance_pct:Q", format=".1f")]
+        ).properties(height=360)
+        st.altair_chart(chart_cli, use_container_width=True)
+    except Exception:
+        st.info("Altair no disponible para el gráfico.")
+else:
+    st.warning("La tabla no tiene columna CLIENTE.")
+
+st.markdown("---")
+
+# 3) Avance por SKU
+st.subheader("Avance por SKU")
+if "CODIGO" in df.columns:
+    g_sku = agg_progress(df, by=["CODIGO"]).sort_values("avance_pct", ascending=False)
+    st.dataframe(g_sku.rename(columns={
+        "CODIGO": "SKU",
+        "total_qty": "Total",
+        "picked_qty": "Pickeado",
+        "avance_pct": "Avance %"
+    }), use_container_width=True)
+    try:
+        import altair as alt
+        chart_sku = alt.Chart(g_sku).mark_bar().encode(
+            x=alt.X("CODIGO:N", sort="-y", title="SKU"),
+            y=alt.Y("avance_pct:Q", title="Avance %"),
+            tooltip=["CODIGO:N", "total_qty:Q", "picked_qty:Q", alt.Tooltip("avance_pct:Q", format=".1f")]
+        ).properties(height=360)
+        st.altair_chart(chart_sku, use_container_width=True)
+    except Exception:
+        st.info("Altair no disponible para el gráfico.")
+else:
+    st.warning("La tabla no tiene columna CODIGO (SKU).")
