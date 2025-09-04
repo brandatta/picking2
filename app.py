@@ -41,6 +41,7 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
 def load_base(date_range=None) -> pd.DataFrame:
+    """Carga datos con o sin filtro de fecha (si DATE_COL existe)."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(f"SHOW COLUMNS FROM {TABLE} LIKE %s", (DATE_COL,))
@@ -78,7 +79,6 @@ def load_base(date_range=None) -> pd.DataFrame:
         df["CLIENTE"] = df["CLIENTE"].apply(
             lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
         )
-
     if "FECHA" in df.columns:
         df["FECHA"] = pd.to_datetime(df["FECHA"], errors="coerce")
 
@@ -94,7 +94,7 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
 # ================== STATE ==================
 def _ensure_state():
     if "date_range" not in st.session_state:
-        st.session_state.date_range = ()
+        st.session_state.date_range = ()   # sin fecha por defecto
     if "sel_clientes" not in st.session_state:
         st.session_state.sel_clientes = []
     if "sel_skus" not in st.session_state:
@@ -108,27 +108,30 @@ def reset_filters():
 
 _ensure_state()
 
-# ================== SIDEBAR ==================
-st.sidebar.title("Filtros")
+# ================== FILTRO DE FECHA EN ÁREA PRINCIPAL ==================
+st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
+fc1, = st.columns([1])
+with fc1:
+    st.date_input(
+        "Rango de fechas",
+        key="date_range",
+        value=(),   # vacío -> sin filtro
+        help=f"Filtra por {DATE_COL} (si existe)."
+    )
+st.markdown('</div>', unsafe_allow_html=True)
 
-st.sidebar.date_input(
-    "Rango de fechas",
-    key="date_range",
-    value=(),
-    help=f"Filtra por {DATE_COL} (si existe)."
-)
-
+# Cargar base en función de la fecha seleccionada
 df = load_base(st.session_state.date_range)
 
+# ================== SIDEBAR (multiselects + limpiar abajo) ==================
+st.sidebar.title("Filtros")
 clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
 skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
-
 st.sidebar.multiselect("Cliente", options=clientes, key="sel_clientes")
 st.sidebar.multiselect("SKU", options=skus, key="sel_skus")
-
-# Botón limpiar filtros (debajo de todo)
 st.sidebar.button("Limpiar filtros", on_click=reset_filters, use_container_width=True)
 
+# Aplicar filtros Cliente / SKU
 if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
 if st.session_state.sel_skus:
@@ -136,7 +139,6 @@ if st.session_state.sel_skus:
 
 # ================== KPIs GLOBALES ==================
 st.title("Dashboard Picking (SAP)")
-
 total_qty = float(df["CANTIDAD"].sum())
 picked_qty = float(df.loc[df["PICKING"] == "Y", "CANTIDAD"].sum())
 avance_pct = (picked_qty / total_qty * 100) if total_qty > 0 else 0
@@ -172,7 +174,6 @@ with tab1:
             "picked_qty": "Pickeado",
             "avance_pct": "Avance %"
         }), use_container_width=True)
-
         try:
             import altair as alt
             chart = alt.Chart(g).mark_bar().encode(
@@ -196,7 +197,6 @@ with tab2:
             "picked_qty": "Pickeado",
             "avance_pct": "Avance %"
         }), use_container_width=True)
-
         try:
             import altair as alt
             chart = alt.Chart(g).mark_bar().encode(
@@ -220,7 +220,6 @@ with tab3:
             "picked_qty": "Pickeado",
             "avance_pct": "Avance %"
         }), use_container_width=True)
-
         try:
             import altair as alt
             chart = alt.Chart(g).mark_bar().encode(
