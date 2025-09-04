@@ -14,7 +14,7 @@ DATE_COL = "FECHA"  # Cambiar si la columna de fecha tiene otro nombre
 # ================== ESTILOS ==================
 st.markdown("""
 <style>
-.block-container { padding-top: 2rem !important; }
+.block-container { padding-top: 1.25rem !important; }
 .kpi {
   background: #fff; border: 1px solid #eee; border-radius: 12px;
   padding: 16px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,.03);
@@ -22,11 +22,11 @@ st.markdown("""
 .kpi h3 { margin: 0; font-size: 1.4rem; }
 .kpi small { color: #666; }
 
-/* --- Fix: que el calendario de la sidebar no se corte --- */
-section[data-testid="stSidebar"] { overflow: visible !important; }
-section[data-testid="stSidebar"] div[data-testid="stDateInput"] { overflow: visible !important; }
-div[data-baseweb="popover"] { z-index: 10000 !important; }          /* popover baseweb (calendario) */
-div[role="dialog"] { z-index: 10000 !important; }                    /* fallback para algunos temas */
+/* Opcional: mejorar legibilidad del header de filtros */
+.filter-bar {
+  background: #fafafa; border: 1px solid #eee; border-radius: 10px;
+  padding: 12px; margin-bottom: 12px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -43,6 +43,9 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=120)
 def load_base(date_range=None) -> pd.DataFrame:
+    """
+    Carga datos de la tabla sap con o sin filtro de fecha (si DATE_COL existe).
+    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(f"SHOW COLUMNS FROM {TABLE} LIKE %s", (DATE_COL,))
@@ -96,7 +99,7 @@ def agg_progress(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
 # ================== STATE ==================
 def _ensure_state():
     if "date_range" not in st.session_state:
-        st.session_state.date_range = ()
+        st.session_state.date_range = ()  # vacío por default
     if "sel_clientes" not in st.session_state:
         st.session_state.sel_clientes = []
     if "sel_skus" not in st.session_state:
@@ -110,25 +113,36 @@ def reset_filters():
 
 _ensure_state()
 
-# ================== UI: SIDEBAR ==================
-st.sidebar.title("Filtros")
+# ================== SIDEBAR ==================
+st.sidebar.title("Acciones")
 st.sidebar.button("Limpiar filtros", on_click=reset_filters, use_container_width=True)
 
-st.sidebar.date_input(
-    "Rango de fechas",
-    key="date_range",
-    value=(),
-    help=f"Filtra por {DATE_COL} (si existe)."
-)
+# ================== BARRA DE FILTROS (ÁREA PRINCIPAL) ==================
+with st.container():
+    st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
+    fc1, fc2, fc3 = st.columns([1, 2, 2], vertical_alignment="center")
 
-df = load_base(st.session_state.date_range)
+    with fc1:
+        st.date_input(
+            "Rango de fechas",
+            key="date_range",
+            value=(),
+            help=f"Filtra por {DATE_COL} (si existe)."
+        )
+    # Cargamos base parcial según la fecha elegida (para que los combos se alimenten de ese recorte)
+    df = load_base(st.session_state.date_range)
 
-clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
-skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
+    clientes = sorted(df["CLIENTE"].dropna().unique().tolist()) if "CLIENTE" in df.columns else []
+    skus     = sorted(df["CODIGO"].dropna().unique().tolist()) if "CODIGO" in df.columns else []
 
-st.sidebar.multiselect("Cliente", options=clientes, key="sel_clientes")
-st.sidebar.multiselect("SKU", options=skus, key="sel_skus")
+    with fc2:
+        st.multiselect("Cliente", options=clientes, key="sel_clientes")
+    with fc3:
+        st.multiselect("SKU", options=skus, key="sel_skus")
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Aplicar filtros Cliente / SKU
 if st.session_state.sel_clientes:
     df = df[df["CLIENTE"].isin(st.session_state.sel_clientes)]
 if st.session_state.sel_skus:
@@ -184,7 +198,7 @@ with tab1:
         except Exception:
             st.info("Altair no disponible para el gráfico.")
     else:
-        st.warning(f"No hay columna `{DATE_COL}` o el filtro está vacío.")
+        st.warning(f"No hay columna `{DATE_COL}` o el filtro de fecha está vacío.")
 
 with tab2:
     st.subheader("Avance por cliente")
