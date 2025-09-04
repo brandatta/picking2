@@ -21,6 +21,12 @@ st.markdown("""
 }
 .kpi h3 { margin: 0; font-size: 1.4rem; }
 .kpi small { color: #666; }
+
+/* --- Fix: que el calendario de la sidebar no se corte --- */
+section[data-testid="stSidebar"] { overflow: visible !important; }
+section[data-testid="stSidebar"] div[data-testid="stDateInput"] { overflow: visible !important; }
+div[data-baseweb="popover"] { z-index: 10000 !important; }          /* popover baseweb (calendario) */
+div[role="dialog"] { z-index: 10000 !important; }                    /* fallback para algunos temas */
 </style>
 """, unsafe_allow_html=True)
 
